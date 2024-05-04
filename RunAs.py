@@ -37,6 +37,7 @@ NO_PROPAGATE_INHERIT_ACE = 0x4
 LOGON_NETCREDENTIALS_ONLY = 2
 CREATE_NO_WINDOW = 0x08000000
 ERROR_MORE_DATA = 234
+CREATE_UNICODE_ENVIRONMENT = 0x00000400
 
 
 kernel32 = ctypes.WinDLL("kernel32.dll")
@@ -56,6 +57,7 @@ GetCurrentProcessId = kernel32.GetCurrentProcessId
 ProcessIdToSessionId = kernel32.ProcessIdToSessionId
 GetTokenInformation = advapi32.GetTokenInformation
 GetCurrentThread = kernel32.GetCurrentThread
+GetCurrentProcess = kernel32.GetCurrentProcess
 LogonUser = advapi32.LogonUserA
 LogonUserW = advapi32.LogonUserW
 GetSecurityDescriptorDacl = advapi32.GetSecurityDescriptorDacl
@@ -67,6 +69,8 @@ InitializeAcl = advapi32.InitializeAcl
 GetAce = advapi32.GetAce
 AddAce = advapi32.AddAce
 CopySid = advapi32.CopySid
+RevertToSelf = advapi32.RevertToSelf
+AdjustTokenPrivileges = advapi32.AdjustTokenPrivileges
 LookupPrivilegeName = advapi32.LookupPrivilegeNameA
 SetSecurityInfo = advapi32.SetSecurityInfo
 CreateProcessWithLogonW = advapi32.CreateProcessWithLogonW
@@ -80,6 +84,9 @@ DuplicateTokenEx = advapi32.DuplicateTokenEx
 AddAccessAllowedAce = advapi32.AddAccessAllowedAce
 SetSecurityDescriptorDacl = advapi32.SetSecurityDescriptorDacl
 SetTokenInformation = advapi32.SetTokenInformation
+LookupPrivilegeValue = advapi32.LookupPrivilegeValueA
+CreateProcessWithTokenW =advapi32.CreateProcessWithTokenW
+CreateProcessAsUser = advapi32.CreateProcessAsUserA
 GetProcessWindowStation = user32.GetProcessWindowStation
 GetUserObjectInformation = user32.GetUserObjectInformationA
 OpenWindowStation = user32.OpenWindowStationA
@@ -88,6 +95,10 @@ OpenDesktop = user32.OpenDesktopA
 GetUserObjectSecurity = user32.GetUserObjectSecurity
 SetUserObjectSecurity = user32.SetUserObjectSecurity
 GetUserProfileDirectory = userenv.GetUserProfileDirectoryA
+LoadUserProfile = userenv.LoadUserProfileA
+CreateEnvironmentBlock = userenv.CreateEnvironmentBlock
+UnloadUserProfile = userenv.UnloadUserProfile
+DestroyEnvironmentBlock = userenv.DestroyEnvironmentBlock
 
 PSID = ctypes.c_void_p
 
@@ -170,6 +181,18 @@ class ACL_SIZE_INFORMATION(ctypes.Structure):
 class SID_IDENTIFIER_AUTHORITY(ctypes.Structure):
     _fields_ = [
         ('Value', (ctypes.c_byte * 6)),
+    ]
+
+class PROFILEINFO(ctypes.Structure):
+    _fields_ = [
+        ('dwSize', ctypes.wintypes.DWORD),
+        ('dwFlags', ctypes.wintypes.DWORD),
+        ('lpUserName', ctypes.wintypes.LPSTR),
+        ('lpProfilePath', ctypes.wintypes.LPSTR),
+        ('lpDefaultPath', ctypes.wintypes.LPSTR),
+        ('lpServerName', ctypes.wintypes.LPSTR),
+        ('lpPolicyPath', ctypes.wintypes.LPSTR),
+        ('hProfile', ctypes.c_void_p)
     ]
 
 class SECURITY_IMPERSONATION_LEVEL(object):
@@ -364,6 +387,13 @@ class ACE_HEADER(ctypes.Structure):
     ]
 
 
+class TOKEN_PRIVILEGES_2(ctypes.Structure):
+    _fields_ = [
+        ('PrivilegeCount', ctypes.c_uint32),
+        ('Luid', LUID),
+        ('Attributes', ctypes.wintypes.DWORD)
+    ]
+
 class ACCESS_ALLOWED_ACE(ctypes.Structure):
     _fields_ = [
         ('Header', ACE_HEADER),
@@ -488,6 +518,31 @@ class AccessToken(object):
             privileges.append(privilegeStatus)
         return privileges
         
+    def EnablePrivilege(privilege, token):
+        sebLuid = LUID()
+        tokenp = TOKEN_PRIVILEGES_2()
+        tokenp.PrivilegeCount = 1
+        LookupPrivilegeValue(ctypes.c_void_p(0), ctypes.wintypes.LPCSTR(privilege.encode()), ctypes.byref(sebLuid))
+        tokenp.Luid = sebLuid
+        tokenp.Attributes = AccessToken.SE_PRIVILEGE_ENABLED
+        if not AdjustTokenPrivileges(token, ctypes.c_bool(False), ctypes.byref(tokenp), ctypes.wintypes.DWORD(0), ctypes.c_void_p(0), ctypes.c_void_p(0)):
+            raise ValueError(f"AdjustTokenPrivileges on privilege { privilege } true")
+        print(f"AdjustTokenPrivileges on privilege { privilege } succeeded")
+
+    def EnableAllPrivileges(token):
+        privileges = [
+            "SeAssignPrimaryTokenPrivilege",   "SeAuditPrivilege",                "SeBackupPrivilege",                         "SeChangeNotifyPrivilege", 
+            "SeCreateGlobalPrivilege",         "SeCreatePagefilePrivilege",       "SeCreatePermanentPrivilege",                "SeCreateSymbolicLinkPrivilege", 
+            "SeCreateTokenPrivilege",          "SeDebugPrivilege",                "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege", 
+            "SeImpersonatePrivilege",          "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege",                  "SeIncreaseWorkingSetPrivilege", 
+            "SeLoadDriverPrivilege",           "SeLockMemoryPrivilege",           "SeMachineAccountPrivilege",                 "SeManageVolumePrivilege", 
+            "SeProfileSingleProcessPrivilege", "SeRelabelPrivilege",              "SeRemoteShutdownPrivilege",                 "SeRestorePrivilege", 
+            "SeSecurityPrivilege",             "SeShutdownPrivilege",             "SeSyncAgentPrivilege",                      "SeSystemEnvironmentPrivilege", 
+            "SeSystemProfilePrivilege",        "SeSystemtimePrivilege",           "SeTakeOwnershipPrivilege",                  "SeTcbPrivilege", 
+            "SeTimeZonePrivilege",             "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege",                         "SeUnsolicitedInputPrivilege"
+        ]
+        for privilege in privileges:
+            AccessToken.EnablePrivilege(privilege, token)
 
     def GetTokenIntegrityLevel(hToken):
         illevel = IntegrityLevel.Unknown
@@ -593,12 +648,6 @@ def GetProcessFunction(createProcessFunction):
         return "CreateProcessWithTokenW()"
     else:
         return "CreateProcessWithLogonW()"
-
-def RunasCreateProcessAsUserW():
-    pass
-
-def RunasCreateProcessWithTokenW():
-    pass
 
 def GetUserSid(domain, username):
     err = 0
@@ -880,7 +929,7 @@ class RunAsPy():
         if AccessToken.GetTokenIntegrityLevel(pToken) < AccessToken.GetTokenIntegrityLevel(hTokenDuplicateLocal):
             AccessToken.SetTokenIntegrityLevel(hTokenDuplicateLocal, AccessToken.GetTokenIntegrityLevel(pToken))
         result = ImpersonateLoggedOnUser(hTokenDuplicateLocal)
-        return hTokenDuplicateLocal.value
+        return hTokenDuplicateLocal
 
     def IsLimitedUserLogon(self, hToken, username, domainName, password, logonTypeNotFiltered):
         isLimitedUserLogon = False
@@ -957,6 +1006,81 @@ class RunAsPy():
             output += "No output received from the process.\n"
         return output
 
+    def RevertToSelfCustom(self):
+        RevertToSelf()
+        if self.hTokenPreviousImpersonatingThread:
+            print(self.hTokenPreviousImpersonatingThread)
+            ImpersonateLoggedOnUser(self.hTokenPreviousImpersonatingThread)
+
+    def GetUserEnvironmentBlock(self, hToken, username, forceUserProfileCreation, userProfileExists):
+        result = False
+        profileInfo = PROFILEINFO()
+        lpEnvironment = ctypes.c_void_p(0)
+        hTokenDuplicate = ctypes.c_void_p(0)
+        if forceUserProfileCreation or userProfileExists:
+            profileInfo.dwSize = ctypes.sizeof(profileInfo)
+            profileInfo.lpUserName = username
+            result = LoadUserProfile(hToken, ctypes.byref(profileInfo))
+            if not result and ctypes.GetLastError() == 1314:
+                print(f"[*] Warning: LoadUserProfile failed due to insufficient permissions")
+        hTokenDuplicate = self.ImpersonateLoggedOnUserWithProperIL(hToken)
+        try:
+            CreateEnvironmentBlock(ctypes.byref(lpEnvironment), hToken, ctypes.c_bool(False))
+        except:
+            result = False
+        self.RevertToSelfCustom()
+        CloseHandle(hTokenDuplicate)
+        if result and (forceUserProfileCreation or userProfileExists):
+            UnloadUserProfile(hToken, profileInfo.hProfile)
+    
+    def RunasCreateProcessAsUserW(self, username, domainName, password, logonType, logonProvider, commandLine, forceUserProfileCreation, userProfileExists, processInfo, logonTypeNotFiltered):
+        hToken = ctypes.c_void_p(0)
+        TokenPrimary = 2
+        hTokenDuplicate = ctypes.c_void_p(0)
+        lpEnvironment = ctypes.c_void_p(0)
+        if not LogonUser(username, domainName, password, logonType, logonProvider, hToken):
+            raise ValueError(f"LogonUser true")
+        if not DuplicateTokenEx(hToken, ctypes.wintypes.DWORD(AccessToken.TOKEN_ALL_ACCESS), ctypes.c_void_p(0), SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, ctypes.c_int(TokenPrimary), ctypes.byref(hTokenDuplicate)):
+            raise ValueError(f"TokenDuplicateEx true")
+        if self.IsLimitedUserLogon(hTokenDuplicate, username, domainName, password, logonTypeNotFiltered):
+            print(f"[*] Warning: Logon for user '{ username.decode() }' is limited. Use the --logon-type value '{ logonTypeNotFiltered }' to obtain a more privileged token")
+        lpEnvironment = self.GetUserEnvironmentBlock(hTokenDuplicate, username, forceUserProfileCreation, userProfileExists)
+        pToken = ctypes.wintypes.HANDLE(0)
+        if not OpenProcessToken(ctypes.wintypes.HANDLE(GetCurrentProcess()), ctypes.wintypes.DWORD(AccessToken.TOKEN_ALL_ACCESS), ctypes.byref(pToken)):
+            print(ctypes.GetLastError())
+            raise ValueError("Failed to obtain token")
+        AccessToken.EnablePrivilege("SeAssignPrimaryTokenPrivilege", pToken)
+        AccessToken.EnableAllPrivileges(hTokenDuplicate)
+        if not CreateProcessAsUser(hTokenDuplicate, ctypes.c_void_p(None), ctypes.wintypes.LPCSTR(commandLine.encode()), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_bool(True), ctypes.wintypes.DWORD(CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT), ctypes.c_void_p(lpEnvironment), ctypes.wintypes.LPCSTR((os.environ["SystemRoot"] + "\\System32").encode()), ctypes.byref(self.startupInfo), ctypes.byref(processInfo)):
+            print(ctypes.GetLastError())
+            raise ValueError(f"CreateProcessAsUser true")
+        if lpEnvironment:
+            DestroyEnvironmentBlock(lpEnvironment)
+        CloseHandle(hToken)
+        CloseHandle(hTokenDuplicate)
+
+    def RunasCreateProcessWithTokenW(self, username, domainName, password, commandLine, logonType, logonFlags, logonProvider, processInfo, logonTypeNotFiltered):
+        TokenPrimary = 1
+        hToken = ctypes.c_void_p(0)
+        hTokenDuplicate = ctypes.c_void_p(0)
+        if not LogonUser(username, domainName, password, logonType, logonProvider, hToken):
+            raise ValueError("LogonUser true")
+        if not DuplicateTokenEx(hToken, ctypes.wintypes.DWORD(AccessToken.TOKEN_ALL_ACCESS), ctypes.c_void_p(0), SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, ctypes.c_int(TokenPrimary), ctypes.byref(hTokenDuplicate)):
+            raise ValueError("DuplicatetokenEx true")
+        if self.IsLimitedUserLogon(hTokenDuplicate, username, domainName, password, logonTypeNotFiltered):
+            print(f"[*] Warning: Logon for user '{ username.decode() }' is limited. Use the --logon-type value '{ logonTypeNotFiltered }' to obtain a more privileged token")
+        pToken = ctypes.wintypes.HANDLE(0)
+        if not OpenProcessToken(ctypes.wintypes.HANDLE(GetCurrentProcess()), ctypes.wintypes.DWORD(AccessToken.TOKEN_ALL_ACCESS), ctypes.byref(pToken)):
+            print(ctypes.GetLastError())
+            raise ValueError("Failed to obtain token")
+        AccessToken.EnablePrivilege("SeImpersonatePrivilege", pToken)
+        AccessToken.EnableAllPrivileges(hTokenDuplicate)
+        if not CreateProcessWithTokenW(hTokenDuplicate, logonFlags, ctypes.c_void_p(None), ctypes.wintypes.LPWSTR(commandLine), ctypes.wintypes.DWORD(CREATE_NO_WINDOW), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.byref(self.startupInfo), ctypes.byref(processInfo)):
+            print(ctypes.GetLastError())
+            raise ValueError("CreateProcessWithTokenW true")
+        CloseHandle(hToken)
+        CloseHandle(hTokenDuplicate)
+
     def RunasCreateProcessWithLogonW(self, username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered):
         domainName_buffer = ctypes.create_string_buffer(domainName, len(domainName) + 1)
         username_buffer = ctypes.create_string_buffer(username, len(username) + 1)
@@ -977,12 +1101,12 @@ class RunAsPy():
             if logonType != LOGON32_LOGON_INTERACTIVE.value:
                 print(f"[*] Warning: The function CreateProcessWithLogonW is not compatible with the requested logon type '{ logonType }'. Reverting to the Interactive logon type '2'. To force a specific logon type, use the flag combination --remote-impersonation and --logon-type.")
             CheckAvailableUserLogonType(username, password, domainName, LOGON32_LOGON_INTERACTIVE.value, LOGON32_PROVIDER_DEFAULT)
-            if not LogonUser(username, domainName, password_buffer, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, hTokenUacCheck):
+            if not LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, hTokenUacCheck):
                 raise ValueError("LogonUser true")
             if self.IsLimitedUserLogon(hTokenUacCheck, username_buffer, domainName_buffer, password_buffer, logonTypeNotFiltered):
                 print(f"[*] Warning: The logon for user '{ username.decode() }' is limited. Use the flag combination --bypass-uac and --logon-type '{ logonTypeNotFiltered }' to obtain a more privileged token.")
             CloseHandle(hTokenUacCheck)
-            if not CreateProcessWithLogonW(username.decode(), domainName.decode(), password.decode(), logonFlags, None, commandLine, CREATE_NO_WINDOW, None, None, ctypes.byref(self.startupInfo), ctypes.byref(processInfo)): #Thisline
+            if not CreateProcessWithLogonW(username.decode(), domainName.decode(), password.decode(), logonFlags, None, commandLine, CREATE_NO_WINDOW, None, None, ctypes.byref(self.startupInfo), ctypes.byref(processInfo)):
                 raise ValueError(f"CreateProcessWithLogonW logon type 2 true")
 
     
@@ -1033,7 +1157,6 @@ class RunAsPy():
         self.stationDaclObj = WindowStationDACL()
         desktopName = self.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType)
         self.startupInfo.lpDesktop = ctypes.wintypes.LPWSTR(desktopName.decode())
-        print(self.startupInfo.lpDesktop)
         if logonType == LOGON32_LOGON_NEW_CREDENTIALS.value:
             logonProvider = LOGON32_PROVIDER_WINNT50
             if not domainName:
@@ -1055,10 +1178,9 @@ class RunAsPy():
                 if bypassUac:
                     raise ValueError(f"The flag --bypass-uac is not compatible with {GetProcessFunction(createProcessFunction)} but only with --function '2' (CreateProcessWithLogonW)")
                 if createProcessFunction == 0:
-                    RunasCreateProcessAsUserW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, self.startupInfo, processInfo, logonTypeNotFiltered)
+                    self.RunasCreateProcessAsUserW(username, domainName, password, logonType, logonProvider, commandLine, forceUserProfileCreation, userProfileExists, processInfo, logonTypeNotFiltered)
                 elif createProcessFunction == 1:
-                    RunasCreateProcessWithTokenW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, self.startupInfo, processInfo, logonTypeNotFiltered)
-        #self.RunasCreateProcessWithLogonW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered) TESTING
+                    self.RunasCreateProcessWithTokenW(username, domainName, password, commandLine, logonType, logonFlags, logonProvider, processInfo, logonTypeNotFiltered)
         output = ""
         if processTimeout > 0:
             CloseHandle(self.hOutputWrite)
@@ -1101,6 +1223,7 @@ class RunAsPy():
 
 def Runas(username=None, password=None, cmd=None, domainName=None, processTimeout=120000, logonType=2, createProcessFunction=0, remote=None, forceUserProfileCreation=False, bypassUac=False, remoteImpersonation=False):
     invoker = RunAsPy()
+    #output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
     try:
         output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
     except Exception as e:
@@ -1115,7 +1238,7 @@ parser.add_argument('-P', '--password', help="", nargs="?")
 parser.add_argument('-c', '--command', help="", nargs="?", dest="cmd")
 parser.add_argument('-t', '--timeout', help="", nargs="?", default=120000, dest="processTimeout")
 parser.add_argument('-l', '--logon-type', help="", nargs="?", default=2, dest="logonType")
-parser.add_argument('-f', '--function', help="", nargs="?", dest="createProcessFunction", default=DefaultCreateProcessFunction())
+parser.add_argument('-f', '--function', help="", nargs="?", dest="createProcessFunction", default=DefaultCreateProcessFunction(), type=int)
 parser.add_argument('-r', '--remote', help="", nargs="?", default=None)
 parser.add_argument('-p', '--force-profile', help="", action="store_true", default=False, dest="forceUserProfileCreation")
 parser.add_argument('-b', '--bypass-uac', help="", action="store_true", default=False, dest="bypassUac")
