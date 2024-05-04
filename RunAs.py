@@ -36,6 +36,7 @@ OBJECT_INHERIT_ACE = 0x1
 NO_PROPAGATE_INHERIT_ACE = 0x4
 LOGON_NETCREDENTIALS_ONLY = 2
 CREATE_NO_WINDOW = 0x08000000
+ERROR_MORE_DATA = 234
 
 
 kernel32 = ctypes.WinDLL("kernel32.dll")
@@ -128,9 +129,9 @@ class TOKEN_PRIVILEGES(ctypes.Structure):
 class STARTUPINFO(ctypes.Structure):
     _fields_ = [
         ('cb',               ctypes.wintypes.DWORD),
-        ('lpReserved',       ctypes.wintypes.LPSTR),
-        ('lpDesktop',        ctypes.wintypes.LPSTR),
-        ('lpTitle',          ctypes.wintypes.LPSTR),
+        ('lpReserved',       ctypes.wintypes.LPWSTR),
+        ('lpDesktop',        ctypes.wintypes.LPWSTR),
+        ('lpTitle',          ctypes.wintypes.LPWSTR),
         ('dwX',              ctypes.wintypes.DWORD),
         ('dwY',              ctypes.wintypes.DWORD),
         ('dwXSize',          ctypes.wintypes.DWORD),
@@ -147,6 +148,8 @@ class STARTUPINFO(ctypes.Structure):
         ('hStdError',        ctypes.wintypes.HANDLE)
     ] 
 
+LPSTARTUPINFOW = ctypes.POINTER(STARTUPINFO)
+
 class PROCESS_INFORMATION(ctypes.Structure):
     _fields_ = [
         ("process",    ctypes.wintypes.HANDLE),
@@ -154,6 +157,8 @@ class PROCESS_INFORMATION(ctypes.Structure):
         ("processId",  ctypes.wintypes.DWORD),
         ("threadId",   ctypes.wintypes.DWORD)
     ]
+
+LPPROCESS_INFORMATION = ctypes.POINTER(PROCESS_INFORMATION)
 
 class ACL_SIZE_INFORMATION(ctypes.Structure):
     _fields_ = [
@@ -387,6 +392,29 @@ def convertAttributeToString(attribute):
         return "Enabled|Enable Default"
     return "Error"
 
+CreateProcessWithLogonW.argtypes = [
+    ctypes.wintypes.LPCWSTR,
+    ctypes.wintypes.LPCWSTR,
+    ctypes.wintypes.LPCWSTR,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.LPCWSTR,
+    ctypes.wintypes.LPWSTR,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.LPCWSTR,
+    ctypes.wintypes.LPCWSTR,
+    LPSTARTUPINFOW,
+    LPPROCESS_INFORMATION
+]
+
+LogonUser.argtypes = [
+    ctypes.wintypes.LPCSTR,
+    ctypes.wintypes.LPCSTR,
+    ctypes.wintypes.LPCSTR,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.DWORD,
+    ctypes.POINTER(ctypes.wintypes.HANDLE)
+]
+
 class AccessToken(object):
     SECURITY_MANDATORY_UNTRUSTED_RID = 0
     SECURITY_MANDATORY_LOW_RID = 0x1000
@@ -534,12 +562,12 @@ def ParseCommonProcessInCommandline(commandline):
 
 def CheckAvailableUserLogonType(username, password, domainName, logonType, logonProvider):
     hTokenCheck1 = ctypes.c_void_p(0)
-    if not LogonUser(ctypes.byref(username), ctypes.byref(domainName), ctypes.byref(password), ctypes.wintypes.DWORD(logonType), logonProvider, ctypes.byref(hTokenCheck1)):
+    if not LogonUser(username, domainName, password, logonType, logonProvider, hTokenCheck1):
         if ctypes.GetLastError() == ERROR_LOGON_TYPE_NOT_GRANTED:
             availableLogonType = 0
             for logonTypeTry in [LOGON32_LOGON_SERVICE, LOGON32_LOGON_BATCH, LOGON32_LOGON_NETWORK_CLEARTEXT, LOGON32_LOGON_NETWORK, LOGON32_LOGON_INTERACTIVE]:
                 hTokenCheck2 = ctypes.c_void_p(0)
-                if LogonUser(username, domainName, password, logonTypeTry, logonProvider, ctypes.byref(hTokenCheck2)):
+                if LogonUser(username, domainName, password, logonTypeTry, logonProvider, hTokenCheck2):
                     availableLogonType = logonTypeTry
                     if AccessToken.GetTokenIntegrityLevel(hTokenCheck2) > AccessToken.IntegrityLevel.Medium:
                         availableLogonType = logonTypeTry
@@ -579,11 +607,11 @@ def GetUserSid(domain, username):
     referencedDomainName = ctypes.c_void_p(None)
     cchReferencedDomainName = ctypes.wintypes.DWORD(0)
     sidUse = SID_NAME_USE()
-    if domain and domain != ".":
-        fqan = f"{domain}\\{username}"
+    if domain and domain != b".":
+        fqan = domain + b"\\" + username
     else:
         fqan = username
-    fqan_buffer = ctypes.create_string_buffer(bytes(fqan.encode()), len(fqan) + 1)
+    fqan_buffer = ctypes.create_string_buffer(fqan, len(fqan) + 1)
     if not LookupAccountName(ctypes.c_void_p(None), ctypes.byref(fqan_buffer), ctypes.byref(Sid), ctypes.byref(cbSid), referencedDomainName, ctypes.byref(cchReferencedDomainName), ctypes.byref(sidUse.SidTypeUser)):
         if ctypes.GetLastError() in [ERROR_INVALID_FLAGS, ERROR_INSUFFICIENT_BUFFER]:
             Sid = (ctypes.c_byte * cbSid.value)()
@@ -830,6 +858,7 @@ class RunAsPy():
         self.hErrorWrite = ctypes.c_void_p()
         self.socket = ctypes.c_void_p()
         self.stationDaclObj = None
+        self.startupInfo = STARTUPINFO()
         self.hTokenPreviousImpersonatingThread = ctypes.c_void_p()
 
     def ImpersonateLoggedOnUserWithProperIL(self, hToken):
@@ -887,7 +916,7 @@ class RunAsPy():
         logonProvider = LOGON32_PROVIDER_DEFAULT
         if logonType == LOGON32_LOGON_NEW_CREDENTIALS:
             logonProvider = LOGON32_PROVIDER_WINNT50
-        result = LogonUser(ctypes.byref(username), ctypes.byref(domainName), ctypes.byref(password), ctypes.wintypes.DWORD(logonType), logonProvider, ctypes.byref(hToken))
+        result = LogonUser(username, domainName, password, ctypes.wintypes.DWORD(logonType), logonProvider, ctypes.byref(hToken))
         if not result:
             raise ValueError("LogonUser true")
         hTokenDuplicate = self.ImpersonateLoggedOnUserWithProperIL(hToken)
@@ -901,7 +930,7 @@ class RunAsPy():
             result = False
         return result
 
-    def CreateProcessWithLogonWUacBypass(self, logonType, logonFlags, username, domainName, password, processPath, commandLine, startupInfo, processInfo):
+    def CreateProcessWithLogonWUacBypass(self, logonType, logonFlags, username, domainName, password, processPath, commandLine, processInfo):
         result = False
         hToken = ctypes.c_void_p(0)
         pToken = ctypes.wintypes.HANDLE(0)
@@ -911,52 +940,53 @@ class RunAsPy():
             raise ValueError("Failed to obtain token")
         AccessToken.SetTokenIntegrityLevel(hToken, AccessToken.GetTokenIntegrityLevel(pToken))
         SetSecurityInfo(ctypes.wintypes.HANDLE(-1), SE_OBJECT_TYPE.SE_KERNEL_OBJECT, SECURITY_INFORMATION().DACL_SECURITY_INFORMATION, ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0))
-        result = CreateProcessWithLogonW(username, domainName, password, ctypes.wintypes.DWORD(logonFlags.value | LOGON_NETCREDENTIALS_ONLY), ctypes.c_void_p(processPath), commandLine, ctypes.c_void_p(CREATE_NO_WINDOW), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.byref(startupInfo), ctypes.byref(processInfo))
+        result = CreateProcessWithLogonW(username, domainName, password, ctypes.wintypes.DWORD(logonFlags.value | LOGON_NETCREDENTIALS_ONLY), ctypes.c_void_p(processPath), commandLine, ctypes.c_void_p(CREATE_NO_WINDOW), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.byref(self.startupInfo), ctypes.byref(processInfo))
         return result
 
     def ReadOutputFromPipe(self, hReadPipe):
         dwBytesRead = ctypes.wintypes.DWORD(0)
         buffer = (ctypes.c_byte * BUFFER_SIZE_PIPE)()
         output = ""
-        if not ReadFile(hReadPipe, ctypes.byref(buffer), ctypes.wintypes.DWORD(BUFFER_SIZE_PIPE), ctypes.byref(dwBytesRead), ctypes.c_void_p(0)):
+        hResult = False
+        while not hResult:
+            hResult = ReadFile(hReadPipe, ctypes.byref(buffer), ctypes.wintypes.DWORD(BUFFER_SIZE_PIPE), ctypes.byref(dwBytesRead), ctypes.c_void_p(0))
+            if not hResult and ctypes.GetLastError() != ERROR_MORE_DATA:
+                break
+            output += bytes(buffer[:dwBytesRead.value]).decode()
+        if not hResult:
             output += "No output received from the process.\n"
-        output += bytes(buffer[:dwBytesRead.value - 1]).decode()
         return output
 
     def RunasCreateProcessWithLogonW(self, username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered):
-        domainName_buffer = ctypes.create_string_buffer(bytes(domainName.encode()), len(domainName) + 1)
-        username_buffer = ctypes.create_string_buffer(bytes(username.encode()), len(username) + 1)
-        password_buffer = ctypes.create_string_buffer(bytes(password.encode()), len(password) + 1)
+        domainName_buffer = ctypes.create_string_buffer(domainName, len(domainName) + 1)
+        username_buffer = ctypes.create_string_buffer(username, len(username) + 1)
+        password_buffer = ctypes.create_string_buffer(password, len(password) + 1)
         commandLine_buffer = ctypes.create_string_buffer(bytes(commandLine.encode()), len(commandLine) + 1)
-        username = ctypes.wintypes.LPCWSTR(username)
-        domainName = ctypes.wintypes.LPCWSTR(domainName)
-        password = ctypes.wintypes.LPCWSTR(password)
-        commandLine = ctypes.wintypes.LPCWSTR(commandLine)
         if logonType == LOGON32_LOGON_NEW_CREDENTIALS.value:
-            if not CreateProcessWithLogonW(username, domainName, password, ctypes.wintypes.DWORD(LOGON_NETCREDENTIALS_ONLY), ctypes.c_void_p(0), commandLine, ctypes.c_void_p(CREATE_NO_WINDOW), ctypes.c_uint32(0), ctypes.c_void_p(0), ctypes.byref(startupInfo), ctypes.byref(processInfo)):
+            if not CreateProcessWithLogonW(username, domainName, password, ctypes.wintypes.DWORD(LOGON_NETCREDENTIALS_ONLY), ctypes.c_void_p(0), commandLine, ctypes.c_void_p(CREATE_NO_WINDOW), ctypes.c_uint32(0), ctypes.c_void_p(0), ctypes.byref(self.startupInfo), ctypes.byref(processInfo)):
                 raise ValueError(f"CreateProcessWithLogonW logon type 9 true")
         elif bypassUac:
             if logonType in [LOGON32_LOGON_NETWORK.value, LOGON32_LOGON_BATCH.value, LOGON32_LOGON_SERVICE.value, LOGON32_LOGON_NETWORK_CLEARTEXT.value]:
                 logonTypeBypassUac = logonType
             else:
                 logonTypeBypassUac = LOGON32_LOGON_NETWORK_CLEARTEXT.value
-            if not self.CreateProcessWithLogonWUacBypass(logonTypeBypassUac, logonFlags, username, domainName, password, None, commandLine, startupInfo, processInfo):
+            if not self.CreateProcessWithLogonWUacBypass(logonTypeBypassUac, logonFlags, username, domainName, password, None, commandLine, self.startupInfo, processInfo):
                 raise ValueError(f"CreateProcessWithLogonUacBypass true")
         else:
             hTokenUacCheck = ctypes.c_void_p(0)
             if logonType != LOGON32_LOGON_INTERACTIVE.value:
                 print(f"[*] Warning: The function CreateProcessWithLogonW is not compatible with the requested logon type '{ logonType }'. Reverting to the Interactive logon type '2'. To force a specific logon type, use the flag combination --remote-impersonation and --logon-type.")
-            CheckAvailableUserLogonType(username_buffer, password_buffer, domainName_buffer, LOGON32_LOGON_INTERACTIVE.value, LOGON32_PROVIDER_DEFAULT)
-            if not LogonUser(ctypes.byref(username_buffer), ctypes.byref(domainName_buffer), ctypes.byref(password_buffer), LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, ctypes.byref(hTokenUacCheck)):
+            CheckAvailableUserLogonType(username, password, domainName, LOGON32_LOGON_INTERACTIVE.value, LOGON32_PROVIDER_DEFAULT)
+            if not LogonUser(username, domainName, password_buffer, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, hTokenUacCheck):
                 raise ValueError("LogonUser true")
             if self.IsLimitedUserLogon(hTokenUacCheck, username_buffer, domainName_buffer, password_buffer, logonTypeNotFiltered):
-                print(f"[*] Warning: The logon for user '{ username.value }' is limited. Use the flag combination --bypass-uac and --logon-type '{ logonTypeNotFiltered }' to obtain a more privileged token.")
+                print(f"[*] Warning: The logon for user '{ username.decode() }' is limited. Use the flag combination --bypass-uac and --logon-type '{ logonTypeNotFiltered }' to obtain a more privileged token.")
             CloseHandle(hTokenUacCheck)
-            if not CreateProcessWithLogonW(username, domainName, password, logonFlags, ctypes.c_void_p(0), commandLine, ctypes.c_void_p(CREATE_NO_WINDOW), ctypes.c_uint32(0), ctypes.c_void_p(0), ctypes.byref(startupInfo), ctypes.byref(processInfo)):
+            if not CreateProcessWithLogonW(username.decode(), domainName.decode(), password.decode(), logonFlags, None, commandLine, CREATE_NO_WINDOW, None, None, ctypes.byref(self.startupInfo), ctypes.byref(processInfo)): #Thisline
                 raise ValueError(f"CreateProcessWithLogonW logon type 2 true")
 
     
-    def RunasSetupStdHandlesForProcess(self, processTimeout, remote, startupInfo, hOutputWrite, hErrorWrite, hOutputRead, socket):
+    def RunasSetupStdHandlesForProcess(self, processTimeout, remote):
         self.hOutputWrite = ctypes.c_void_p(0)
         self.hErrorWrite = ctypes.c_void_p(0)
         self.hOutputRead = ctypes.c_void_p(0)
@@ -975,56 +1005,59 @@ class RunAsPy():
             PIPE_NOWAIT = ctypes.wintypes.DWORD(0x00000001)
             if not SetNamedPipeHandleState(self.hOutputRead, ctypes.byref(PIPE_NOWAIT), ctypes.c_void_p(0), ctypes.c_void_p(0)):
                 raise ValueError("SetNamedPipeHandleState true")
-            startupInfo.dwFlags = Startf_UseStdHandles
-            startupInfo.hStdOutput = self.hOutputWrite
-            startupInfo.hStdError = self.hErrorWrite
+            self.startupInfo.dwFlags = Startf_UseStdHandles
+            self.startupInfo.hStdOutput = self.hOutputWrite
+            self.startupInfo.hStdError = self.hErrorWrite
         elif remote != None:
             self.socket = ConnectRemote(remote)
-            startupInfo.dwFlags = Startf_UseStdHandles
-            startupInfo.hStdInput = socket
-            startupInfo.hStdOutput = self.socket
-            startupInfo.hStdError = self.socket
+            self.startupInfo.dwFlags = Startf_UseStdHandles
+            self.startupInfo.hStdInput = self.socket
+            self.startupInfo.hStdOutput = self.socket
+            self.startupInfo.hStdError = self.socket
             raise ValueError("Remote not currently supported")
 
     def RunAs(self, username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation):
         if not domainName:
             domainName = "."
-        username_buffer = ctypes.create_string_buffer(bytes(username.encode()), len(username) + 1)
-        password_buffer = ctypes.create_string_buffer(bytes(password.encode()), len(password) + 1)
+        username = bytes(username.encode())
+        password = bytes(password.encode())
+        domainName = bytes(domainName.encode())
+        username_buffer = ctypes.create_string_buffer(username, len(username) + 1)
+        password_buffer = ctypes.create_string_buffer(password, len(password) + 1)
         commandLine = ParseCommonProcessInCommandline(cmd)
         logonProvider = LOGON32_PROVIDER_DEFAULT
         logonTypeNotFiltered = 0
-        startupInfo = STARTUPINFO()
-        startupInfo.cb = ctypes.sizeof(startupInfo)
+        self.startupInfo.cb = ctypes.sizeof(self.startupInfo)
         processInfo = PROCESS_INFORMATION()
-        self.RunasSetupStdHandlesForProcess(processTimeout, remote, startupInfo, self.hOutputWrite, self.hErrorWrite, self.hOutputRead, self.socket)
+        self.RunasSetupStdHandlesForProcess(processTimeout, remote)
         self.stationDaclObj = WindowStationDACL()
         desktopName = self.stationDaclObj.AddAclToActiveWindowStation(domainName, username, logonType)
-        startupInfo.lpDesktop = ctypes.wintypes.LPSTR(desktopName)
+        self.startupInfo.lpDesktop = ctypes.wintypes.LPWSTR(desktopName.decode())
+        print(self.startupInfo.lpDesktop)
         if logonType == LOGON32_LOGON_NEW_CREDENTIALS.value:
             logonProvider = LOGON32_PROVIDER_WINNT50
             if not domainName:
-                domainName = "."
-        domainName_buffer = ctypes.create_string_buffer(bytes(domainName.encode()), len(domainName) + 1)
+                domainName = b"."
+        domainName_buffer = ctypes.create_string_buffer(domainName, len(domainName) + 1)
         CheckAvailableUserLogonType(username_buffer, password_buffer, domainName_buffer, logonType, logonProvider)
         if remoteImpersonation:
-            RunasRemoteImpersonation(username, domainName, password, logonType, logonProvider, commandLine, startupInfo, processInfo, logonTypeNotFiltered)
+            RunasRemoteImpersonation(username, domainName, password, logonType, logonProvider, commandLine, self.startupInfo, processInfo, logonTypeNotFiltered)
         else:
             logonFlags = ctypes.c_uint32(0)
-            userProfileExists = self.IsUserProfileCreated(username_buffer, password_buffer, domainName_buffer, logonType)
+            userProfileExists = self.IsUserProfileCreated(username, password, domainName, logonType)
             if userProfileExists or forceUserProfileCreation:
                 logonFlags = LOGON_WITH_PROFILE
             elif logonType != LOGON32_LOGON_NEW_CREDENTIALS.value and not forceUserProfileCreation and not userProfileExists:
                 raise ValueError(f"[*] Warning: User profile directory for user { username } does not exist. Use --force-profile if you want to force the creation.")
             if createProcessFunction == 2:
-                self.RunasCreateProcessWithLogonW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered)
+                self.RunasCreateProcessWithLogonW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, self.startupInfo, processInfo, logonTypeNotFiltered)
             else:
                 if bypassUac:
                     raise ValueError(f"The flag --bypass-uac is not compatible with {GetProcessFunction(createProcessFunction)} but only with --function '2' (CreateProcessWithLogonW)")
                 if createProcessFunction == 0:
-                    RunasCreateProcessAsUserW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered)
+                    RunasCreateProcessAsUserW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, self.startupInfo, processInfo, logonTypeNotFiltered)
                 elif createProcessFunction == 1:
-                    RunasCreateProcessWithTokenW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered)
+                    RunasCreateProcessWithTokenW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, self.startupInfo, processInfo, logonTypeNotFiltered)
         #self.RunasCreateProcessWithLogonW(username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered) TESTING
         output = ""
         if processTimeout > 0:
@@ -1071,7 +1104,6 @@ def Runas(username=None, password=None, cmd=None, domainName=None, processTimeou
     try:
         output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
     except Exception as e:
-        print(e)
         invoker.CleanupHandles()
         output = f"{e}"
     return output
@@ -1091,4 +1123,4 @@ parser.add_argument('-i', '--remote-impersonation', help="", action="store_true"
 
 args = parser.parse_args()
 
-Runas(**args.__dict__)
+print(Runas(**args.__dict__))
