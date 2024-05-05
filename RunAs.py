@@ -88,6 +88,7 @@ OpenProcessToken = advapi32.OpenProcessToken
 GetSidSubAuthorityCount = advapi32.GetSidSubAuthorityCount
 GetSidSubAuthority = advapi32.GetSidSubAuthority
 OpenThreadToken = advapi32.OpenThreadToken
+DuplicateToken = advapi32.DuplicateToken
 DuplicateTokenEx = advapi32.DuplicateTokenEx
 AddAccessAllowedAce = advapi32.AddAccessAllowedAce
 SetSecurityDescriptorDacl = advapi32.SetSecurityDescriptorDacl
@@ -1125,11 +1126,13 @@ class RunAsPy():
             raise ValueError("Failed to obtain token")
         AccessToken.SetTokenIntegrityLevel(hToken, AccessToken.GetTokenIntegrityLevel(pToken))
         SetSecurityInfo(ctypes.wintypes.HANDLE(-1), SE_OBJECT_TYPE.SE_KERNEL_OBJECT, SECURITY_INFORMATION().DACL_SECURITY_INFORMATION, ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0))
+        if not ImpersonateLoggedOnUser(hToken):
+            raise ValueError(f"Failed to impersonate with token: { hToken.value }")
         result = CreateProcessWithLogonW(
             username.decode(),
             domainName.decode(),
             password.decode(),
-            ctypes.wintypes.DWORD(logonFlags.value | LOGON_NETCREDENTIALS_ONLY),
+            logonFlags.value | LOGON_NETCREDENTIALS_ONLY,
             processPath.decode() if processPath else processPath,
             commandLine,
             CREATE_NO_WINDOW,
@@ -1138,6 +1141,8 @@ class RunAsPy():
             ctypes.byref(self.startupInfo),
             ctypes.byref(processInfo)
         )
+        print(ctypes.GetLastError())
+        # CloseHandle(hToken)
         return result
 
     def ReadOutputFromPipe(self, hReadPipe):
@@ -1414,13 +1419,14 @@ class RunAsPy():
 
 def Runas(username=None, password=None, cmd=None, domainName=None, processTimeout=120000, logonType=2, createProcessFunction=0, remote=None, forceUserProfileCreation=False, bypassUac=False, remoteImpersonation=False):
     invoker = RunAsPy()
-    # output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
-    try:
-        output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
-    except Exception as e:
-        invoker.CleanupHandles()
-        output = f"{e}"
-    return output
+    output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
+    return(output)
+    # try:
+    #     output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
+    # except Exception as e:
+    #     invoker.CleanupHandles()
+    #     output = f"{e}"
+    # return output
 
 parser = argparse.ArgumentParser(description="")
 parser.add_argument('-d', '--domain', help="", nargs="?", dest="domainName")
