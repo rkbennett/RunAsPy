@@ -547,6 +547,22 @@ GetUserProfileDirectory.argtypes = [
     ctypes.wintypes.LPDWORD
 ]
 
+CreateProcess.argtypes = [
+    ctypes.wintypes.LPCSTR,
+    ctypes.wintypes.LPSTR,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_bool,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.LPVOID,
+    ctypes.wintypes.LPCSTR,
+    ctypes.POINTER(STARTUPINFO),
+    ctypes.POINTER(PROCESS_INFORMATION)
+]
+
+GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_byte)
+GetSidSubAuthority.restype = ctypes.POINTER(ctypes.wintypes.DWORD)
+
 class AccessToken(object):
     SECURITY_MANDATORY_UNTRUSTED_RID = 0
     SECURITY_MANDATORY_LOW_RID = 0x1000
@@ -648,18 +664,20 @@ class AccessToken(object):
 
     def GetTokenIntegrityLevel(hToken):
         illevel = IntegrityLevel.Unknown
-        pb = (ctypes.c_ubyte * 1000)()
-        cb = ctypes.c_uint(1000)
+        cb = ctypes.wintypes.DWORD(0)
+        GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenIntegrityLevel, ctypes.c_void_p(None), ctypes.wintypes.DWORD(0), ctypes.byref(cb))
+        pb = (ctypes.c_char * cb.value)()
         if GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenIntegrityLevel, ctypes.byref(pb), cb, ctypes.byref(cb)):
             pSid = ctypes.c_void_p.from_address(ctypes.addressof(pb))
-            dwIntegrityLevel = GetSidSubAuthority(pSid, ctypes.wintypes.DWORD(GetSidSubAuthorityCount(pSid) - 1))
-            if dwIntegrityLevel == AccessToken.SECURITY_MANDATORY_LOW_RID:
+            # IsValidSid = advapi32.IsValidSid
+            dwIntegrityLevel = GetSidSubAuthority(pSid, ctypes.wintypes.DWORD(GetSidSubAuthorityCount(pSid).contents.value - 1))
+            if dwIntegrityLevel.contents.value == AccessToken.SECURITY_MANDATORY_LOW_RID:
                 return IntegrityLevel.Low
-            elif dwIntegrityLevel >= AccessToken.SECURITY_MANDATORY_MEDIUM_RID and dwIntegrityLevel < AccessToken.SECURITY_MANDATORY_HIGH_RID:
+            elif dwIntegrityLevel.contents.value >= AccessToken.SECURITY_MANDATORY_MEDIUM_RID and dwIntegrityLevel.contents.value < AccessToken.SECURITY_MANDATORY_HIGH_RID:
                 return IntegrityLevel.Medium
-            elif dwIntegrityLevel >= AccessToken.SECURITY_MANDATORY_HIGH_RID:
+            elif dwIntegrityLevel.contents.value >= AccessToken.SECURITY_MANDATORY_HIGH_RID:
                 return IntegrityLevel.High
-            elif dwIntegrityLevel >= AccessToken.SECURITY_MANDATORY_SYSTEM_RID:
+            elif dwIntegrityLevel.contents.value >= AccessToken.SECURITY_MANDATORY_SYSTEM_RID:
                 return IntegrityLevel.System
             return IntegrityLevel.Unknown
         return illevel
@@ -1180,16 +1198,18 @@ class RunAsPy():
         if AccessToken.GetTokenIntegrityLevel(pToken) < AccessToken.GetTokenIntegrityLevel(hTokenDupImpersonation):
             AccessToken.SetTokenIntegrityLevel(hTokenDupImpersonation, AccessToken.GetTokenIntegrityLevel(pToken))
         AccessToken.EnableAllPrivileges(hTokenDupImpersonation)
-        CreateEnvironmentBlock(ctypes.byref(lpEnvironment), hToken, ctypes.c_bool(False))
+        if not CreateEnvironmentBlock(ctypes.byref(lpEnvironment), hToken, ctypes.c_bool(False)):
+            print(f"[!] Unable to create environment block")
+        env_ptr = lpEnvironment.value
         if not CreateProcess(
-            ctypes.wintypes.LPCSTR(None),
-            ctypes.wintypes.LPSTR(commandLine.encode()),
-            ctypes.c_void_p(None),
-            ctypes.c_void_p(None),
-            ctypes.c_bool(True),
-            ctypes.wintypes.DWORD(CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT),
+            None,
+            commandLine.encode(),
+            None,
+            None,
+            True,
+            CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
             lpEnvironment,
-            ctypes.wintypes.LPCSTR((os.environ["SystemRoot"] + "\\System32").encode()),
+            (os.environ["SystemRoot"] + "\\System32").encode(),
             ctypes.byref(self.startupInfo),
             ctypes.byref(processInfo)
         ):
@@ -1201,9 +1221,9 @@ class RunAsPy():
         AccessToken.SetTokenIntegrityLevel(hTokenProcess, AccessToken.GetTokenIntegrityLevel(hTokenDupImpersonation))
         SetSecurityInfo(processInfo.process, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, SECURITY_INFORMATION().DACL_SECURITY_INFORMATION, ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0))
         SetSecurityInfo(hTokenProcess, SE_OBJECT_TYPE.SE_KERNEL_OBJECT, SECURITY_INFORMATION().DACL_SECURITY_INFORMATION, ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0), ctypes.c_void_p(0))
-        if not SetThreadToken(processInfo.thread, hTokenDupImpersonation):
+        if not SetThreadToken(ctypes.byref(ctypes.wintypes.HANDLE(processInfo.thread)), hTokenDupImpersonation):
             raise ValueError(f"SetThreadToken true")
-        ResumeThread(processInfo.thread)
+        ResumeThread(ctypes.wintypes.HANDLE(processInfo.thread))
         CloseHandle(hToken)
         CloseHandle(hTokenDupImpersonation)
         CloseHandle(hTokenProcess)
@@ -1258,10 +1278,6 @@ class RunAsPy():
         CloseHandle(hTokenDuplicate)
 
     def RunasCreateProcessWithLogonW(self, username, domainName, password, logonType, logonFlags, commandLine, bypassUac, startupInfo, processInfo, logonTypeNotFiltered):
-        domainName_buffer = ctypes.create_string_buffer(domainName, len(domainName) + 1)
-        username_buffer = ctypes.create_string_buffer(username, len(username) + 1)
-        password_buffer = ctypes.create_string_buffer(password, len(password) + 1)
-        commandLine_buffer = ctypes.create_string_buffer(bytes(commandLine.encode()), len(commandLine) + 1)
         if logonType == LOGON32_LOGON_NEW_CREDENTIALS.value:
             if not CreateProcessWithLogonW(username.decode(), domainName.decode(), password.decode(), ctypes.wintypes.DWORD(LOGON_NETCREDENTIALS_ONLY), None, commandLine, CREATE_NO_WINDOW, None, None, ctypes.byref(self.startupInfo), ctypes.byref(processInfo)):
                 raise ValueError(f"CreateProcessWithLogonW logon type 9 true")
@@ -1279,7 +1295,7 @@ class RunAsPy():
             CheckAvailableUserLogonType(username, password, domainName, LOGON32_LOGON_INTERACTIVE.value, LOGON32_PROVIDER_DEFAULT)
             if not LogonUser(username, domainName, password, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, hTokenUacCheck):
                 raise ValueError("LogonUser true")
-            if self.IsLimitedUserLogon(hTokenUacCheck, username_buffer, domainName_buffer, password_buffer, logonTypeNotFiltered):
+            if self.IsLimitedUserLogon(hTokenUacCheck, username, domainName, password, logonTypeNotFiltered):
                 print(f"[*] Warning: The logon for user '{ username.decode() }' is limited. Use the flag combination --bypass-uac and --logon-type '{ logonTypeNotFiltered }' to obtain a more privileged token.")
             CloseHandle(hTokenUacCheck)
             if not CreateProcessWithLogonW(username.decode(), domainName.decode(), password.decode(), logonFlags, None, commandLine, CREATE_NO_WINDOW, None, None, ctypes.byref(self.startupInfo), ctypes.byref(processInfo)):
@@ -1398,6 +1414,7 @@ class RunAsPy():
 
 def Runas(username=None, password=None, cmd=None, domainName=None, processTimeout=120000, logonType=2, createProcessFunction=0, remote=None, forceUserProfileCreation=False, bypassUac=False, remoteImpersonation=False):
     invoker = RunAsPy()
+    # output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
     try:
         output = invoker.RunAs(username, password, cmd, domainName, processTimeout, logonType, createProcessFunction, remote, forceUserProfileCreation, bypassUac, remoteImpersonation)
     except Exception as e:
@@ -1410,7 +1427,7 @@ parser.add_argument('-d', '--domain', help="", nargs="?", dest="domainName")
 parser.add_argument('-u', '--username', help="", nargs="?")
 parser.add_argument('-P', '--password', help="", nargs="?")
 parser.add_argument('-c', '--command', help="", nargs="?", dest="cmd")
-parser.add_argument('-t', '--timeout', help="", nargs="?", default=120000, dest="processTimeout")
+parser.add_argument('-t', '--timeout', help="", nargs="?", default=120000, dest="processTimeout", type=int)
 parser.add_argument('-l', '--logon-type', help="", nargs="?", default=2, dest="logonType", type=int)
 parser.add_argument('-f', '--function', help="", nargs="?", dest="createProcessFunction", default=DefaultCreateProcessFunction(), type=int)
 parser.add_argument('-r', '--remote', help="", nargs="?", default=None)
