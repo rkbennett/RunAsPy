@@ -56,7 +56,7 @@ WSAStartup = ws2_32.WSAStartup
 ReadFile = kernel32.ReadFile
 CloseHandle = kernel32.CloseHandle
 CreatePipe = kernel32.CreatePipe
-CreateProcess = kernel32.CreateProcessA
+CreateProcessW = kernel32.CreateProcessW
 DuplicateHandle = kernel32.DuplicateHandle
 SetNamedPipeHandleState = kernel32.SetNamedPipeHandleState
 WaitForSingleObject = kernel32.WaitForSingleObject
@@ -559,15 +559,15 @@ GetUserProfileDirectory.argtypes = [
     ctypes.wintypes.LPDWORD
 ]
 
-CreateProcess.argtypes = [
-    ctypes.wintypes.LPCSTR,
-    ctypes.wintypes.LPSTR,
+CreateProcessW.argtypes = [
+    ctypes.wintypes.LPCWSTR,
+    ctypes.wintypes.LPWSTR,
     ctypes.c_void_p,
     ctypes.c_void_p,
     ctypes.c_bool,
     ctypes.wintypes.DWORD,
     ctypes.wintypes.LPVOID,
-    ctypes.wintypes.LPCSTR,
+    ctypes.wintypes.LPCWSTR,
     ctypes.POINTER(STARTUPINFO),
     ctypes.POINTER(PROCESS_INFORMATION)
 ]
@@ -1114,16 +1114,15 @@ class RunAsPy():
         AccessToken.EnableAllPrivileges(hTokenDupImpersonation)
         if not CreateEnvironmentBlock(ctypes.byref(lpEnvironment), hToken, ctypes.c_bool(False)):
             print(f"[!] Unable to create environment block")
-        env_ptr = lpEnvironment.value
-        if not CreateProcess(
+        if not CreateProcessW(
             None,
-            commandLine.encode(),
+            commandLine,
             None,
             None,
             True,
             CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
             lpEnvironment,
-            (os.environ["SystemRoot"] + "\\System32").encode(),
+            (os.environ["SystemRoot"] + "\\System32"),
             ctypes.byref(self.startupInfo),
             ctypes.byref(processInfo)
         ):
