@@ -32,6 +32,8 @@ Python >= 3.8
 
 ----
 
+### commandline
+
 ```console
 usage: RunAs.py [-h] [-d [DOMAINNAME]] -u [USERNAME] -P [PASSWORD] -c [CMD ...] [-t [PROCESSTIMEOUT]]
                 [-l [{2,3,4,5,8,9}]] [-f [CREATEPROCESSFUNCTION]] [-r [REMOTE]] [-p] [-b] [-i] [-v]
@@ -92,6 +94,15 @@ Runas.py -u adm1 -P password1 -c "cmd /c whoami /priv" --bypass-uac
 
 ```console
 Runas.py -u adm1 -P password1 -c "cmd /c echo admin > C:\Windows\admin" -l 8 --remote-impersonation
+```
+
+### programmatic (python module)
+
+```python
+import RunAsPy
+config = {"username": "foo", "password": "F00", "cmd": "whoami /priv", "verbose"=True, bypassUac=True}
+output = RunAsPy.Runas(**config)
+print(output)
 ```
 
 The two processes (calling and called) will communicate through one *pipe* (both for *stdout* and *stderr*).
