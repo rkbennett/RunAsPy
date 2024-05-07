@@ -28,11 +28,11 @@ Based on the process caller token permissions, it will use one of the create pro
 
 Python >= 3.8
 
-## Usage
+# Usage
 
 ----
 
-### commandline
+## commandline
 
 ```console
 usage: RunAs.py [-h] [-d [DOMAINNAME]] -u [USERNAME] -P [PASSWORD] -c [CMD ...] [-t [PROCESSTIMEOUT]]
@@ -96,7 +96,7 @@ Runas.py -u adm1 -P password1 -c "cmd /c whoami /priv" --bypass-uac
 Runas.py -u adm1 -P password1 -c "cmd /c echo admin > C:\Windows\admin" -l 8 --remote-impersonation
 ```
 
-### programmatic (python module)
+## programmatic (python module)
 
 ```python
 import RunAsPy
