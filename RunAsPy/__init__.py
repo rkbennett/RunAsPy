@@ -147,7 +147,6 @@ class AccessToken(object):
         pb = (ctypes.c_char * cb.value)()
         if GetTokenInformation(hToken, TOKEN_INFORMATION_CLASS.TokenIntegrityLevel, ctypes.byref(pb), cb, ctypes.byref(cb)):
             pSid = ctypes.c_void_p.from_address(ctypes.addressof(pb))
-            # IsValidSid = advapi32.IsValidSid
             dwIntegrityLevel = GetSidSubAuthority(pSid, ctypes.wintypes.DWORD(GetSidSubAuthorityCount(pSid).contents.value - 1))
             if dwIntegrityLevel.contents.value == AccessToken.SECURITY_MANDATORY_LOW_RID:
                 return IntegrityLevel.Low
