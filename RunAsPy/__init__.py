@@ -528,7 +528,7 @@ class RunAsPy():
             hResult = ReadFile(hReadPipe, ctypes.byref(buffer), ctypes.wintypes.DWORD(BUFFER_SIZE_PIPE), ctypes.byref(dwBytesRead), ctypes.c_void_p(0))
             if not hResult and ctypes.GetLastError() != ERROR_MORE_DATA:
                 break
-            output += bytes(buffer[:dwBytesRead.value]).decode()
+            output += bytes(buffer[:dwBytesRead.value]).decode().replace("\n","")
         if not hResult:
             logging.info("No output received from the process.")
         return output
@@ -746,7 +746,7 @@ class RunAsPy():
             self.hOutputWrite = ctypes.wintypes.DWORD(0)
             self.hErrorWrite = ctypes.wintypes.DWORD(0)
             WaitForSingleObject(processInfo.process, processTimeout)
-            output += f"\n{self.ReadOutputFromPipe(self.hOutputRead)}"
+            output += f"{self.ReadOutputFromPipe(self.hOutputRead)}"
         else:
             sessionId = ctypes.wintypes.DWORD()
             hResult = ProcessIdToSessionId(ctypes.wintypes.DWORD(GetCurrentProcessId()), ctypes.byref(sessionId))
