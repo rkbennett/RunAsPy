@@ -25,6 +25,7 @@ ERROR_NO_TOKEN = 1008
 SECURITY_DESCRIPTOR_REVISION = 1
 ACL_REVISION = 2
 MAXDWORD = 0xffffffff
+MAX_PATH = 260
 ACCESS_ALLOWED_ACE_TYPE = 0x0
 CONTAINER_INHERIT_ACE = 0x2
 INHERIT_ONLY_ACE = 0x8
@@ -72,6 +73,7 @@ GetTokenInformation = advapi32.GetTokenInformation
 GetCurrentThread = kernel32.GetCurrentThread
 GetCurrentProcess = kernel32.GetCurrentProcess
 ResumeThread = kernel32.ResumeThread
+OpenProcess = kernel32.OpenProcess
 LogonUser = advapi32.LogonUserA
 GetSecurityDescriptorDacl = advapi32.GetSecurityDescriptorDacl
 LookupAccountName = advapi32.LookupAccountNameA
@@ -82,6 +84,7 @@ InitializeAcl = advapi32.InitializeAcl
 GetAce = advapi32.GetAce
 AddAce = advapi32.AddAce
 CopySid = advapi32.CopySid
+ConvertSidToStringSid =  advapi32.ConvertSidToStringSidA
 SetThreadToken = advapi32.SetThreadToken
 RevertToSelf = advapi32.RevertToSelf
 AdjustTokenPrivileges = advapi32.AdjustTokenPrivileges
@@ -119,8 +122,8 @@ OpenThreadToken.restype = ctypes.c_bool
 
 class LUID(ctypes.Structure):
     _fields_ = [
-        ('LowPart', ctypes.c_uint32),
-        ('HighPart', ctypes.c_int32)
+        ('LowPart', ctypes.wintypes.DWORD),
+        ('HighPart', ctypes.c_long)
     ]
 
 class LUID_AND_ATTRIBUTES(ctypes.Structure):
@@ -427,6 +430,27 @@ class WSADATA(ctypes.Structure):
     ]
 
 
+class ACL(ctypes.Structure):
+    _fields_ = [
+        ('AclRevision', ctypes.c_byte),
+        ('Sbz1', ctypes.c_byte),
+        ('AclSize', ctypes.wintypes.WORD),
+        ('AceCount', ctypes.wintypes.WORD),
+        ('Sbz2', ctypes.wintypes.WORD)
+    ]
+
+
+class SECURITY_DESCRIPTOR(ctypes.Structure):
+    _fields_ = [
+        ('Revision', ctypes.c_byte),
+        ('Sbz1', ctypes.c_byte),
+        ('Control', ctypes.wintypes.WORD),
+        ('Owner', ctypes.c_void_p),
+        ('Group', ctypes.c_void_p),
+        ('Sacl', ctypes.POINTER(ACL)),
+        ('Dacl', ctypes.POINTER(ACL))
+    ]
+
 class ACCESS_MASK(object):
     DELETE = 0x00010000
     READ_CONTROL = 0x00020000
@@ -533,6 +557,18 @@ CreateProcessWithLogonW.argtypes = [
     LPPROCESS_INFORMATION
 ]
 
+CreateProcessWithTokenW.argtypes = [
+    ctypes.wintypes.HANDLE,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.LPCWSTR,
+    ctypes.wintypes.LPWSTR,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.LPVOID,
+    ctypes.wintypes.LPCWSTR,
+    LPSTARTUPINFOW,
+    LPPROCESS_INFORMATION
+]
+
 LogonUser.argtypes = [
     ctypes.wintypes.LPCSTR,
     ctypes.wintypes.LPCSTR,
@@ -542,11 +578,13 @@ LogonUser.argtypes = [
     ctypes.POINTER(ctypes.wintypes.HANDLE)
 ]
 
+
 GetUserProfileDirectory.argtypes = [
     ctypes.wintypes.HANDLE,
     ctypes.wintypes.LPSTR,
     ctypes.wintypes.LPDWORD
 ]
+
 
 CreateProcessW.argtypes = [
     ctypes.wintypes.LPCWSTR,
@@ -561,5 +599,18 @@ CreateProcessW.argtypes = [
     ctypes.POINTER(PROCESS_INFORMATION)
 ]
 
+
 GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_byte)
 GetSidSubAuthority.restype = ctypes.POINTER(ctypes.wintypes.DWORD)
+
+LookupAccountName.argtypes = [
+    ctypes.wintypes.LPCSTR, 
+    ctypes.wintypes.LPCSTR, 
+    PSID, 
+    ctypes.POINTER(ctypes.c_ulong), 
+    ctypes.wintypes.LPSTR, 
+    ctypes.POINTER(ctypes.c_ulong), 
+    ctypes.POINTER(ctypes.c_int)
+]
+
+LookupAccountName.restype = ctypes.wintypes.BOOL
