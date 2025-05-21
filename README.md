@@ -100,7 +100,7 @@ Runas.py -u adm1 -P password1 -c "cmd /c echo admin > C:\Windows\admin" -l 8 --r
 
 ```python
 import RunAsPy
-config = {"username": "foo", "password": "F00", "cmd": "whoami /priv", "verbose" :True, "bypassUac": True}
+config = {"username": "foo", "password": "F00", "cmd": ["whoami", "/priv"], "verbose" :True, "bypassUac": True}
 output = RunAsPy.Runas(**config)
 print(output)
 ```
